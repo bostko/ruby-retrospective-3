@@ -1,174 +1,97 @@
 module Asm
-  def self.asm(&block)
-    interpreter = Interpreter.new
-    interpreter.instance_eval &block
-    interpreter.exec
-    interpreter.register_values
-  end
-
-  module Registers
-    [:ax, :bx, :cx, :dx].each do |register|
-      define_method register do
-        register
-      end
-    end
-  end
-
-  module Instructions
-    instructions = [:mov, :inc, :dec, :cmp, :jmp, :je, :jne, :jl, :jle, :jg, :jge]
-
-    instructions.each do |instruction|
-      define_method(instruction) do |first_arg, second_arg = nil|
-        if second_arg
-          send("_#{instruction}".to_sym, first_arg, second_arg)
-        else
-          send("_#{instruction}".to_sym, first_arg)
-        end
-      end
-    end
-
-    instance_methods.each do |method_name|
-      method = instance_method(method_name)
-      define_method(method_name) do |*args|
-        unless method_name == :label
-          fifo << ["_#{method_name}".to_sym, method, args]
-        end
-      end
-    end
-
-    def label(label)
-      current_instruction = fifo.length
-      self.class.send(:define_method, label) do
-        current_instruction
-      end
-    end
-
-    def method_missing(method_name, *arguments)
-      method_name
-    end
-
-    def respond_to_missing?(method_name, include_private = false)
-      true
-    end
-  end
-
-  module InstructionsImplementation
-    def _mov(register, source)
-      set_register register, evaluate(source)
-    end
-
-    def _inc(register, value = 1)
-      value = value.nil? ? 1 : value
-      set_register register, evaluate(register) + evaluate(value)
-    end
-
-    def _dec(register, value = 1)
-      value = value.nil? ? 1 : value
-      set_register register, evaluate(register) - evaluate(value)
-    end
-
-    def _cmp(register, value)
-      self.cmp_temp = evaluate(register) <=> evaluate(value)
-    end
-  end
-
-  module JumpInstructionsImplementation
-    def _je(where)
-      if cmp_temp == 0
-        _jmp(where)
-      end
-    end
-
-    def _jne(where)
-      if cmp_temp != 0
-        _jmp(where)
-      end
-    end
-
-    def _jl(where)
-      if cmp_temp < 0
-        _jmp(where)
-      end
-    end
-
-    def _jle(where)
-      if cmp_temp <= 0
-        _jmp(where)
-      end
-    end
-
-    def _jg(where)
-      if cmp_temp > 0
-        _jmp(where)
-      end
-    end
-
-    def _jge(where)
-      if cmp_temp >= 0
-        _jmp(where)
-      end
-    end
-
-    def _jmp(where)
-      found = false
-      fifo.each_with_index do |method_call, index|
-        n = where.kind_of?(Symbol) ? send(where) : where
-        if found or n == index
-          jump_passed = method_call[1].bind(self).(*method_call[2])
-
-          if jump_instruction?(method_call[0]) and jump_passed
-            break
-          end
-          found = true
-        end
-      end
-      true
-    end
-
-    def jump_instruction?(instruction)
-      [:_je, :_jmp, :_jne, :_jl, :_jle, :_jg, :_jge].include?(instruction)
-    end
-  end
-
-  class Interpreter
-    include Registers
-    include Instructions
-    include InstructionsImplementation
-    include JumpInstructionsImplementation
-
-    attr_accessor :cmp_temp
-    attr_reader :fifo
+  class Compiler
+    attr_reader :instructions, :labels
 
     def initialize
-      @registers = Hash.new(0)
-      @fifo = []
+      @instructions = []
+      @labels = {}
     end
 
-    def exec
-      jump_called = false
-      fifo.each do |method_call|
-        jump_passed = method_call[1].bind(self).(*method_call[2])
-        if jump_instruction?(method_call[0]) && jump_passed
-          break
-        end
+    MUTATORS = [:mov, :inc, :dec, :cmp].freeze
+    JUMPERS = {
+      jmp: proc { true },
+      je:  proc { @last_cmp.zero? },
+      jne: proc { not @last_cmp.zero? },
+      jl:  proc { @last_cmp < 0 },
+      jle: proc { @last_cmp <= 0 },
+      jg:  proc { @last_cmp > 0 },
+      jge: proc { @last_cmp >= 0 },
+    }.freeze
+
+    MUTATORS.each do |mutator_name|
+      define_method mutator_name do |*arguments|
+        @instructions << [mutator_name, *arguments]
       end
     end
 
-    def set_register(register, value)
-      @registers[register] = value
+    JUMPERS.each do |jumper_name, condition|
+      define_method jumper_name do |position|
+        @instructions << [:jmp, condition, position]
+      end
     end
 
-    def register_value(register)
-      @registers[register]
+    def label(name)
+      @labels[name] = @instructions.count
     end
 
-    def evaluate(source)
-      source.kind_of?(Symbol) ? register_value(source) : source
+    def method_missing(label_or_register_name)
+      label_or_register_name
     end
 
-    def register_values
-      [:ax, :bx, :cx, :dx].map { |register| @registers[register] }
+    def self.compile(&program)
+      compiler = new
+      compiler.instance_eval &program
+
+      [compiler.instructions, compiler.labels]
     end
+  end
+
+  class Executor < Struct.new(:instructions, :labels, :ax, :bx, :cx, :dx)
+    def mov(register, value)
+      self[register] = actual_value(value)
+    end
+
+    def inc(register, value = 1)
+      self[register] += actual_value(value)
+    end
+
+    def dec(register, value = 1)
+      self[register] -= actual_value(value)
+    end
+
+    def cmp(comparant_one, comparant_two)
+      @last_cmp = actual_value(comparant_one) <=> actual_value(comparant_two)
+    end
+
+    def jmp(condition, position)
+      @current_instruction = actual_position(position).pred if instance_eval &condition
+    end
+
+    def self.execute((instructions, labels))
+      new(instructions, labels, 0, 0, 0, 0).instance_eval do
+        @current_instruction = -1
+        while instructions[@current_instruction.next] do
+          @current_instruction += 1
+          send *instructions[@current_instruction]
+        end
+
+        [ax, bx, cx, dx]
+      end
+    end
+
+    private
+
+    def actual_value(value)
+      value.is_a?(Symbol) ? self[value] : value
+    end
+
+    def actual_position(position)
+      labels.fetch(position, position)
+    end
+  end
+
+  def self.asm(&program)
+    Executor.execute(Compiler.compile &program)
   end
 end
 
