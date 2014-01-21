@@ -45,10 +45,10 @@ end
 
 class Task
   def self.parse_line line
-    attrs = line.split('|').map do |attr|
-      attr.strip
+    attributes = line.split('|').map do |attribute|
+      attribute.strip
     end
-    Task.new *attrs
+    Task.new *attributes
   end
 
   attr_reader :status, :description, :priority, :tags
