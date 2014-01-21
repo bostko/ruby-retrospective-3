@@ -4,7 +4,7 @@ class Integer
   end
 
   def prime_factors
-    prime_factors = 2.upto(abs-1).select { |n| remainder(n).zero? && n.prime? }
+    prime_factors = 2.upto(abs).select { |n| remainder(n).zero? && n.prime? }
     prime_factors.map { |prime|
       multiple_prime_factors([], self, prime)
     }.flatten
@@ -17,7 +17,7 @@ class Integer
   end
 
   def digits
-    self.to_s.split('').map &:to_i
+    abs.to_s.split('').map &:to_i
   end
 
   private
@@ -43,11 +43,14 @@ class Array
   end
 
   def drop_every(n)
-    each_slice(n).map { |slice| slice[0,n-1] }.inject(:+)
+    each_slice(n).map { |slice| slice[0,n-1] }.flatten
   end
 
   def combine_with(other)
-    zip(other).compact.flatten
+    min_length = [length, other.length].min
+    result = zip(other).take(min_length).flatten(1)
+    result += drop(min_length)
+    result += other.drop(min_length)
   end
 end
 
