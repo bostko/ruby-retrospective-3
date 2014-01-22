@@ -8,7 +8,9 @@ module Graphics
     end
 
     def set_pixel(x, y)
-      @container[y][x] = true
+      if y < @container.length && x < @container[y].length
+        @container[y][x] = true
+      end
     end
 
     def pixel_at?(x, y)
@@ -105,11 +107,19 @@ HTML
     end
 
     def rasterize
-      [Point.new(0, 0)]
+      [self]
     end
 
     def start
-      self
+      Point.new(0, 0)
+    end
+
+    def +(point)
+      Point.new(@x + point.x, @y + point.y)
+    end
+
+    def -(point)
+      Point.new(@x - point.x, @y - point.y)
     end
   end
 
@@ -142,11 +152,13 @@ HTML
       from
     end
 
-    def rasterize
+    def rasterize(shift = Point.new(0, 0))
       if from.x == to.x
-        (from.y..to.y).map { |y| Point.new(0, y - from.y) }
+        (from.y..to.y).map { |y| Point.new(start.x, y) - start + shift }
       elsif from.y == to.y
-        (from.x..to.x).map { |x| Point.new(x - from.x, 0) }
+        (from.x..to.x).map { |x| Point.new(x, start.y) - start + shift }
+      else
+        BresenhamAlgorithm.new(from, to).rasterize
       end
     end
 
@@ -179,6 +191,54 @@ HTML
         @second
       end
     end
+
+    class BresenhamAlgorithm
+      def initialize(from, to)
+        @from, @to = from, to
+      end
+
+      def rasterize
+        @error = 0.0
+        @y     = @from.y - 1
+
+        (@from.x - 1).upto(@to.x - 1).map do |x|
+          calculate_next_point(x, @y).tap { calculate_next_y_approximation }
+        end
+      end
+
+      private
+
+      def calculate_next_point(x, y)
+        if steep_slope?
+          Point.new y, x
+        else
+          Point.new x, y
+        end
+      end
+
+      def steep_slope?
+        (@to.y - @from.y).abs > (@to.x - @from.x).abs
+      end
+
+      def calculate_next_y_approximation
+        @error += error_delta
+        if @error >= 0.5
+          @error -= 1.0
+          @y += vertical_drawing_direction
+        end
+      end
+
+      def vertical_drawing_direction
+        @from.y < @to.y ? 1 : -1
+      end
+
+      def error_delta
+        delta_x = @to.x - @from.x
+        delta_y = (@to.y - @from.y).abs
+
+        delta_y.to_f / delta_x
+      end
+    end
   end
 
   class Rectangle
@@ -188,6 +248,10 @@ HTML
       diagonal = Line.new(first, second)
       @left = diagonal.from
       @right = diagonal.to
+    end
+
+    def start
+      top_left
     end
 
     def top_left
@@ -212,6 +276,15 @@ HTML
 
     def eql?(rectangle)
       rectangle.hash == hash
+    end
+
+    def rasterize
+      [
+        [top_left, top_right], [top_right, bottom_right],
+        [bottom_right, bottom_left], [bottom_left, top_left],
+      ].map do |from, to|
+        Line.new(from, to).rasterize(top_left - from)
+      end.reduce(:+)
     end
 
     def hash
