@@ -121,6 +121,10 @@ HTML
     def -(point)
       Point.new(@x - point.x, @y - point.y)
     end
+
+    def /(divisor)
+      Point.new x / divisor, y / divisor
+    end
   end
 
   class Line
@@ -158,12 +162,12 @@ HTML
       elsif from.y == to.y
         (from.x..to.x).map { |x| Point.new(x, start.y) - start + shift }
       else
-        BresenhamAlgorithm.new(from, to).rasterize
+        BresenhamAlgorithm.new(from, to).rasterize #.map { |point| point + shift }
       end
     end
 
     def ==(line)
-      from == to
+      from == line.from and to == line.to
     end
 
     def eql?(line)
@@ -198,11 +202,15 @@ HTML
       end
 
       def rasterize
-        @error = 0.0
-        @y     = @from.y - 1
 
-        (@from.x - 1).upto(@to.x - 1).map do |x|
-          calculate_next_point(x, @y).tap { calculate_next_y_approximation }
+        step_count    = [(@to.x - @from.x).abs, (@to.y - @from.y).abs].max
+        delta         = (@to - @from) / step_count.to_r
+        current_point = @from - Point.new(1, 1)
+
+        step_count.succ.times.map do
+          Point.new(current_point.x.round, current_point.y.round).tap {
+            current_point = current_point + delta
+          }
         end
       end
 
